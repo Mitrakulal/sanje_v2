@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage
 from telegram import Update
-from telegram.constants import ChatAction
+from telegram.constants import ChatAction, ParseMode
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -18,6 +19,7 @@ from telegram.ext import (
 )
 
 from agent import answer, build_agent
+from bot.formatting import html_to_plain, split_html, to_telegram_html
 from config import SETTINGS
 
 WELCOME = (
@@ -46,8 +48,22 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text("Fresh start. What are we doing?")
 
 
-def _chunks(text: str, size: int = 4000) -> list[str]:
-    return [text[index : index + size] for index in range(0, len(text), size)] or [""]
+async def _send_reply(message, text: str) -> None:
+    """Send rendered HTML, with a plain-text fallback for Telegram errors."""
+    rendered = to_telegram_html(text)
+    for part in split_html(rendered):
+        try:
+            await message.reply_text(
+                part,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+        except BadRequest as exc:
+            print(f"[bot] html reply rejected: {exc}")
+            await message.reply_text(
+                html_to_plain(part),
+                disable_web_page_preview=True,
+            )
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -75,8 +91,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     history.append(AIMessage(content=reply))
     context.user_data["history"] = history[-MAX_HISTORY:]
 
-    for part in _chunks(reply):
-        await message.reply_text(part)
+    await _send_reply(message, reply)
 
 
 def build_application() -> Application:
