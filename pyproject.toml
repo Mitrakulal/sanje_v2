@@ -5,6 +5,7 @@ description = "A small Telegram agent that chats or plans one day out"
 requires-python = ">=3.10"
 dependencies = [
     "python-dotenv>=1.0",
+    "tzdata>=2024.1",
     "langchain>=1.0",
     "langchain-openai>=0.3",
     "langchain-mcp-adapters>=0.1",
