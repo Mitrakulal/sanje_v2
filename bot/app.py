@@ -262,8 +262,6 @@ async def on_plan_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _edit_callback(query, "That plan expired. Ask me to plan it again.")
         return
 
-    context.user_data.pop("pending_plan", None)
-
     existing = store.get_plan(chat_id)
     plan_json = json.dumps(
         {
@@ -289,6 +287,8 @@ async def on_plan_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         print(f"[bot] save failed: {type(exc).__name__}: {exc}", flush=True)
         await _edit_callback(query, "I couldn't save that plan. Please try again.")
         return
+
+    context.user_data.pop("pending_plan", None)
 
     parts = ["Replaced your previous saved plan." if existing else "Saved."]
     if pending["day"]:
