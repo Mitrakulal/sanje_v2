@@ -2,6 +2,7 @@
 
     python main.py check
     python main.py demo "Tomorrow, 4 of us, Rs 2000, evening, from Mangalore"
+    python main.py skills
     python main.py bot
 """
 
@@ -26,7 +27,8 @@ def cmd_check() -> int:
     print(f"  model key      {SETTINGS.masked_model_key}")
     print(f"  tavily key     {SETTINGS.masked_tavily_key}")
     print(f"  timezone       {SETTINGS.tz_name}")
-    print(f"  langsmith      {SETTINGS.langsmith_tracing}")
+    print(f"  langsmith      {SETTINGS.langsmith_tracing} ({SETTINGS.langsmith_project})")
+    print(f"  langsmith id   {SETTINGS.langsmith_agent_id} / {SETTINGS.langsmith_agent_environment}")
 
     missing = SETTINGS.missing()
     if missing:
@@ -41,7 +43,20 @@ def cmd_check() -> int:
     for tool in tools:
         print(f"  - {tool.name}")
 
+    from skills.loader import describe
+
+    print("\nskills")
+    print(describe())
+
     return 0 if not missing else 1
+
+
+def cmd_skills() -> int:
+    from skills.loader import describe
+
+    print("markdown skills")
+    print(describe())
+    return 0
 
 
 def cmd_demo(text: str) -> int:
@@ -69,12 +84,19 @@ def cmd_bot() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="sanje-simple")
-    parser.add_argument("command", nargs="?", default="demo", choices=["check", "demo", "bot"])
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="demo",
+        choices=["check", "demo", "skills", "bot"],
+    )
     parser.add_argument("text", nargs="?", default=DEFAULT_TEXT)
     args = parser.parse_args()
 
     if args.command == "check":
         return cmd_check()
+    if args.command == "skills":
+        return cmd_skills()
     if args.command == "bot":
         return cmd_bot()
     return cmd_demo(args.text)

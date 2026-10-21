@@ -23,6 +23,20 @@ For a plan it needs:
 Preferences are optional. If something is missing, the agent asks for just
 that in normal conversation.
 
+## Skills
+
+The one agent gets three markdown playbooks from `skills/`:
+
+| Skill | What it controls |
+| --- | --- |
+| `planner.md` | Required details, flow, tone and plan shape |
+| `food.md` | Famous-food presentation and no-invention rule |
+| `budget.md` | Budget tool order and how to phrase the result |
+
+They are loaded by `skills/loader.py` and injected into the main system prompt.
+Edit the markdown, restart the bot, and the behavior changes. No vector store,
+no separate food agent, no separate budget agent.
+
 ## Tools
 
 | Tool | What it does |
@@ -55,6 +69,7 @@ Other commands:
 ```powershell
 uv run python main.py check
 uv run python main.py demo "Tomorrow, 4 of us, Rs 2000, evening, from Mangalore"
+uv run python main.py skills
 ```
 
 ## LangSmith
@@ -63,11 +78,21 @@ Set these in `.env` when you have the key:
 
 ```dotenv
 LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 LANGSMITH_API_KEY=...
 LANGSMITH_PROJECT=sanje-simple
+SANJE_AGENT_ID=sanje-simple
+SANJE_AGENT_ENVIRONMENT=local
 ```
 
-LangChain picks them up automatically.
+`LANGSMITH_PROJECT` is the trace destination. `SANJE_AGENT_ID` and
+`SANJE_AGENT_ENVIRONMENT` are attached as trace metadata.
+
+Do not use `LANGSMITH_AGENT_ID` / `LANGSMITH_AGENT_ENVIRONMENT`: LangSmith treats
+those as a beta trace destination, and they conflict with `LANGSMITH_PROJECT`.
+
+`ANTHROPIC_API_KEY` is not used by this build. The model is Groq's
+OpenAI-compatible endpoint.
 
 ## Scope
 

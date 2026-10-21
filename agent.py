@@ -13,11 +13,13 @@ from langchain.chat_models import init_chat_model
 from langchain_core.messages import BaseMessage, HumanMessage
 
 from config import SETTINGS, now
+from skills.loader import for_target
 from tools.loader import load_tools
 
 
 def _system_prompt() -> str:
     stamp = now()
+    skills = for_target("main")
     return f"""You are Sanje, a friendly day-out planner and general chat assistant.
 Today is {stamp:%A}, {stamp:%d %B %Y}, {stamp:%H:%M} in {SETTINGS.tz_name}.
 
@@ -37,21 +39,9 @@ If a required detail is missing, ask for only the missing details in one short,
 natural question. Do not ask again for details the user already gave. Do not
 start planning until all five are present. Resolve relative dates against today.
 
-When all five are present, do this in order:
-1. Call get_weather with the location and the ISO date.
-2. Use web_search for real, current places or events that fit the slot and
-   budget. Two or three searches is plenty.
-3. Call find_famous_food for the location.
-4. Write a simple plan with 3-5 stops and rough time bands, not minute-by-minute
-   timings. Keep it realistic for the chosen slot.
-5. Call calculate_budget LAST. It must be the final tool call. Put every cost
-   you mention in the plan into it, and nothing that is not in the plan. Use
-   per_person=true for per-head costs. The turn is incomplete without this call.
-   Do not add up money yourself.
-6. Reply with the plan, the food picks, a one-line weather note and the budget
-   result. Copy the `display` string from calculate_budget exactly. If the total
-   is slightly over budget, mention it and move on. Do not rewrite the plan to
-   chase the last rupee.
+When all five are present, follow the planner, food and budget skills below.
+Hard tool order: get_weather, then web_search, then find_famous_food, then
+calculate_budget last. If the budget tool was skipped, the turn is incomplete.
 
 RULES
 - Never invent a place, price, opening time or event. If web search fails, say
@@ -64,6 +54,9 @@ RULES
 - If the user just wants to chat, chat. Do not force a plan.
 - Reply in the user's language. If they write in Tulu or Kannada, use the same
   language where you can.
+
+SKILLS
+{skills}
 """
 
 
@@ -81,6 +74,18 @@ def _model():
     )
 
 
+def _trace_config() -> dict:
+    """Attach the extra LangSmith identity fields to every agent run."""
+    return {
+        "run_name": SETTINGS.langsmith_agent_id,
+        "metadata": {
+            "agent_id": SETTINGS.langsmith_agent_id,
+            "environment": SETTINGS.langsmith_agent_environment,
+            "project": SETTINGS.langsmith_project,
+        },
+    }
+
+
 async def build_agent():
     """Build the agent once at bot startup."""
     return create_agent(
@@ -96,7 +101,7 @@ async def answer(agent, messages: list[BaseMessage]) -> str:
     One small guard: if the agent used planning tools but skipped the budget
     tool, nudge it once. This is not a revision loop.
     """
-    result = await agent.ainvoke({"messages": messages})
+    result = await agent.ainvoke({"messages": messages}, config=_trace_config())
     used = _tool_names(result.get("messages") or [])
 
     planning_tools = {"get_weather", "web_search", "find_famous_food"}
@@ -108,7 +113,8 @@ async def answer(agent, messages: list[BaseMessage]) -> str:
             )
         )
         result = await agent.ainvoke(
-            {"messages": [*(result.get("messages") or []), nudge]}
+            {"messages": [*(result.get("messages") or []), nudge]},
+            config=_trace_config(),
         )
 
     for message in reversed(result.get("messages") or []):

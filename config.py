@@ -35,6 +35,12 @@ class Settings:
 
     tz_name: str = os.getenv("TZ", "Asia/Kolkata")
     langsmith_tracing: bool = _truthy(os.getenv("LANGSMITH_TRACING"))
+    langsmith_endpoint: str = os.getenv(
+        "LANGSMITH_ENDPOINT", "https://api.smith.langchain.com"
+    )
+    langsmith_agent_id: str = os.getenv("SANJE_AGENT_ID", "sanje-simple")
+    langsmith_agent_environment: str = os.getenv("SANJE_AGENT_ENVIRONMENT", "local")
+    langsmith_project: str = os.getenv("LANGSMITH_PROJECT", "sanje-simple")
 
     @property
     def tz(self) -> ZoneInfo:
