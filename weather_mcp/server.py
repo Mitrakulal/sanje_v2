@@ -6,12 +6,12 @@ one day of weather, and returns a flat summary the agent can use directly.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
+GEOCODE_URL = "https://nominatim.openstreetmap.org/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 TIMEOUT = 15.0
 SOURCE = "open-meteo"
@@ -23,40 +23,59 @@ def _get(url: str, params: dict) -> dict:
     try:
         with httpx.Client(
             timeout=TIMEOUT,
-            headers={"User-Agent": "SanjeSimple/0.1"},
+            headers={"User-Agent": "SanjeSimple/0.1 (Telegram day planner)"},
         ) as client:
             response = client.get(url, params=params)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            if isinstance(data, list):
+                return {"_rows": data}
+            return data
     except Exception as exc:  # noqa: BLE001
         return {"_error": f"{type(exc).__name__}: {exc}"}
 
 
+def clock(value: str | None) -> str | None:
+    """'2026-10-22T06:10' -> '06:10'."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).strftime("%H:%M")
+    except ValueError:
+        return value
+
+
 def geocode(location: str) -> dict:
-    """Resolve a place name to coordinates."""
+    """Resolve a place name to coordinates.
+
+    Nominatim is better than Open-Meteo's geocoder for "Mangalore": the latter
+    puts a tiny Australian town first. One request per plan is well inside
+    Nominatim's usage policy.
+    """
     payload = _get(
         GEOCODE_URL,
         {
-            "name": location,
-            "count": 1,
-            "language": "en",
-            "format": "json",
+            "q": location,
+            "format": "jsonv2",
+            "limit": 1,
+            "addressdetails": 1,
         },
     )
     if payload.get("_error"):
         raise ValueError(f"geocoding failed: {payload['_error']}")
 
-    rows = payload.get("results") or []
+    rows = payload.get("_rows") or []
     if not rows:
         raise ValueError(f"could not find a place called {location!r}")
 
     row = rows[0]
+    address = row.get("address") or {}
     return {
         "name": row.get("name") or location,
-        "admin": row.get("admin1") or "",
-        "country": row.get("country") or "",
-        "latitude": row["latitude"],
-        "longitude": row["longitude"],
+        "admin": address.get("state") or address.get("region") or "",
+        "country": address.get("country") or "",
+        "latitude": float(row["lat"]),
+        "longitude": float(row["lon"]),
     }
 
 
@@ -108,9 +127,10 @@ def best_window(
         return None
 
     _, start, end = best
+    finish = datetime.fromisoformat(times[end - 1]) + timedelta(hours=1)
     return {
         "start": times[start][11:16],
-        "end": times[end - 1][11:16],
+        "end": finish.strftime("%H:%M"),
         "avg_temp_c": round(sum(temperatures[start:end]) / (end - start), 1),
         "max_rain_probability": round(max(rain_probabilities[start:end])),
         "max_uv": round(max(uv_indexes[start:end]), 1),
@@ -217,8 +237,8 @@ def get_weather(location: str, day: str) -> dict:
         "rain_probability_max": round(rain_max) if rain_max is not None else None,
         "rain_total_mm": round(rain_total, 1) if rain_total is not None else None,
         "uv_max": round(uv_max, 1) if uv_max is not None else None,
-        "sunrise": daily_value("sunrise"),
-        "sunset": daily_value("sunset"),
+        "sunrise": clock(daily_value("sunrise")),
+        "sunset": clock(daily_value("sunset")),
         "best_outdoor_window": best_window(times, temps, rain, uv),
         "warnings": warnings,
     }
