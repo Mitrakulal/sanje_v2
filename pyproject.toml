@@ -1,0 +1,31 @@
+[project]
+name = "sanje-simple"
+version = "0.1.0"
+description = "A small Telegram agent that chats or plans one day out"
+requires-python = ">=3.10"
+dependencies = [
+    "python-dotenv>=1.0",
+    "langchain>=1.0",
+    "langchain-openai>=0.3",
+    "langchain-mcp-adapters>=0.1",
+    "mcp>=1.2",
+    "httpx>=0.27",
+    "python-telegram-bot>=21.6",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.7",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
