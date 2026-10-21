@@ -5,9 +5,12 @@ No graph, no router, no critic. One model, four tools, one system prompt.
 
 from __future__ import annotations
 
+import json
+import re
+
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 
 from config import SETTINGS, now
 from tools.loader import load_tools
@@ -42,14 +45,19 @@ When all five are present, do this in order:
 4. Write a simple plan with 3-5 stops and rough time bands, not minute-by-minute
    timings. Keep it realistic for the chosen slot.
 5. Call calculate_budget LAST. It must be the final tool call. Put every cost
-   in the plan into it. Use per_person=true for per-head costs.
+   you mention in the plan into it, and nothing that is not in the plan. Use
+   per_person=true for per-head costs. The turn is incomplete without this call.
+   Do not add up money yourself.
 6. Reply with the plan, the food picks, a one-line weather note and the budget
-   result. If the total is slightly over budget, mention it and move on. Do not
-   rewrite the plan to chase the last rupee.
+   result. Copy the `display` string from calculate_budget exactly. If the total
+   is slightly over budget, mention it and move on. Do not rewrite the plan to
+   chase the last rupee.
 
 RULES
-- Never invent a place, price, opening time or event. If a tool fails, say what
-  you could not check and continue with what you have.
+- Never invent a place, price, opening time or event. If web search fails, say
+  live place search is unavailable and keep the plan generic; do not name
+  specific businesses from memory.
+- If a tool fails, say what you could not check and continue with what you have.
 - Keep the final plan under about 250 words. Use short headings and bullets.
 - When you recommend a place, mention the source name or link from web search.
 - Do not claim to book, reserve, order or pay for anything.
@@ -82,11 +90,94 @@ async def build_agent():
 
 
 async def answer(agent, messages: list[BaseMessage]) -> str:
-    """Run one turn and return the final text."""
+    """Run one turn and return the final text.
+
+    One small guard: if the agent used planning tools but skipped the budget
+    tool, nudge it once. This is not a revision loop.
+    """
     result = await agent.ainvoke({"messages": messages})
+    used = _tool_names(result.get("messages") or [])
+
+    planning_tools = {"get_weather", "web_search", "find_famous_food"}
+    if used & planning_tools and "calculate_budget" not in used:
+        nudge = HumanMessage(
+            content=(
+                "You skipped calculate_budget. Call it now with the costs from "
+                "your plan, then give the final answer with its total and status."
+            )
+        )
+        result = await agent.ainvoke(
+            {"messages": [*(result.get("messages") or []), nudge]}
+        )
+
     for message in reversed(result.get("messages") or []):
         if getattr(message, "type", "") == "ai":
             text = str(message.content or "").strip()
             if text:
-                return text
+                return _finalize(text, result.get("messages") or [])
     return "I could not put an answer together. Try that once more."
+
+
+def _tool_names(messages: list[BaseMessage]) -> set[str]:
+    names: set[str] = set()
+    for message in messages:
+        for call in getattr(message, "tool_calls", None) or []:
+            name = call.get("name") if isinstance(call, dict) else None
+            if name:
+                names.add(name)
+    return names
+
+
+def _tool_payload(messages: list[BaseMessage], name: str) -> dict | None:
+    """Return the last JSON payload from a named tool, if it has one."""
+    for message in reversed(messages):
+        if getattr(message, "name", "") != name:
+            continue
+
+        content = message.content
+        if isinstance(content, list):
+            content = " ".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        try:
+            payload = json.loads(content)
+        except (TypeError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
+    return None
+
+
+def _finalize(text: str, messages: list[BaseMessage]) -> str:
+    """Keep the model's wording, but make the budget and tool gaps trustworthy."""
+    budget = _tool_payload(messages, "calculate_budget")
+    if budget and budget.get("display"):
+        display = budget["display"]
+        if display not in text:
+            lines = [
+                line
+                for line in text.splitlines()
+                if not re.match(
+                    r"^\s*(?:#+\s*)?(?:\*\*)?(?:budget(?:\s+(?:summary|check|result))?|total)"
+                    r"(?:\*\*)?\s*(?:[:\-–—].*)?$",
+                    line,
+                    re.IGNORECASE,
+                )
+            ]
+            text = "\n".join(lines).strip()
+            text += f"\n\n**Budget (calculated):** {display}"
+
+    search_failed = any(
+        (_tool_payload(messages, name) or {}).get("error")
+        for name in ("web_search", "find_famous_food")
+    )
+    if search_failed and not re.search(
+        r"unavailable|could not check|couldn't check|unverified", text, re.IGNORECASE
+    ):
+        text += (
+            "\n\n_Live place search was unavailable, so venue details are "
+            "unverified._"
+        )
+
+    return text

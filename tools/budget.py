@@ -61,6 +61,13 @@ def calculate_budget(items: list[BudgetItem], people: int, budget: int) -> dict:
 
     percent_over = round((difference / total_budget) * 100, 1) if total_budget else None
 
+    if difference > 0:
+        gap = f"Rs {difference:,} over"
+    elif difference < 0:
+        gap = f"Rs {abs(difference):,} under"
+    else:
+        gap = "exactly on budget"
+
     return {
         "people": group_size,
         "budget": total_budget,
@@ -69,4 +76,5 @@ def calculate_budget(items: list[BudgetItem], people: int, budget: int) -> dict:
         "difference": difference,
         "percent_over": percent_over,
         "status": status,
+        "display": f"Rs {total:,} of Rs {total_budget:,} - {status} ({gap})",
     }
