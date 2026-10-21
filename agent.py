@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
@@ -15,6 +17,23 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from config import SETTINGS, now
 from skills.loader import for_target
 from tools.loader import load_tools
+
+StepHandler = Callable[[str], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class Answer:
+    """The final text plus the facts the bot needs after the turn."""
+
+    text: str
+    tools: frozenset[str]
+    weather: dict | None = None
+    budget: dict | None = None
+
+    @property
+    def is_plan(self) -> bool:
+        planning = {"get_weather", "web_search", "find_famous_food"}
+        return bool(self.budget) and bool(self.tools & planning)
 
 
 def _system_prompt() -> str:
@@ -97,34 +116,100 @@ async def build_agent():
     )
 
 
-async def answer(agent, messages: list[BaseMessage]) -> str:
-    """Run one turn and return the final text.
+async def answer(
+    agent,
+    messages: list[BaseMessage],
+    on_step: StepHandler | None = None,
+) -> Answer:
+    """Run one turn and return the final text plus tool metadata.
 
     One small guard: if the agent used planning tools but skipped the budget
     tool, nudge it once. This is not a revision loop.
     """
-    result = await agent.ainvoke({"messages": messages}, config=_trace_config())
-    used = _tool_names(result.get("messages") or [])
+    collected = list(messages)
 
+    async for update in agent.astream(
+        {"messages": messages},
+        config=_trace_config(),
+        stream_mode="updates",
+    ):
+        for name in _update_tool_calls(update):
+            await _notify(on_step, name)
+        _collect_update(update, collected)
+
+    used = _tool_names(collected)
     planning_tools = {"get_weather", "web_search", "find_famous_food"}
     if used & planning_tools and "calculate_budget" not in used:
+        await _notify(on_step, "calculate_budget")
         nudge = HumanMessage(
             content=(
                 "You skipped calculate_budget. Call it now with the costs from "
                 "your plan, then give the final answer with its total and status."
             )
         )
-        result = await agent.ainvoke(
-            {"messages": [*(result.get("messages") or []), nudge]},
+        followup = [*collected, nudge]
+        async for update in agent.astream(
+            {"messages": list(followup)},
             config=_trace_config(),
-        )
+            stream_mode="updates",
+        ):
+            for name in _update_tool_calls(update):
+                await _notify(on_step, name)
+            _collect_update(update, followup)
+        collected = followup
 
-    for message in reversed(result.get("messages") or []):
-        if getattr(message, "type", "") == "ai":
-            text = str(message.content or "").strip()
-            if text:
-                return _finalize(text, result.get("messages") or [])
-    return "I could not put an answer together. Try that once more."
+    text = "I could not put an answer together. Try that once more."
+    for message in reversed(collected):
+        if getattr(message, "type", "") != "ai":
+            continue
+        content = str(message.content or "").strip()
+        if content:
+            text = _finalize(content, collected)
+            break
+
+    return Answer(
+        text=text,
+        tools=frozenset(_tool_names(collected)),
+        weather=_tool_payload(collected, "get_weather"),
+        budget=_tool_payload(collected, "calculate_budget"),
+    )
+
+
+async def _notify(on_step: StepHandler | None, name: str) -> None:
+    if on_step is None:
+        return
+    try:
+        await on_step(name)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[agent] progress update failed: {type(exc).__name__}: {exc}")
+
+
+def _update_tool_calls(update: object) -> list[str]:
+    names: list[str] = []
+    if not isinstance(update, dict):
+        return names
+
+    for value in update.values():
+        if not isinstance(value, dict):
+            continue
+        for message in value.get("messages") or []:
+            for call in getattr(message, "tool_calls", None) or []:
+                name = call.get("name") if isinstance(call, dict) else None
+                if name:
+                    names.append(str(name))
+    return names
+
+
+def _collect_update(update: object, target: list[BaseMessage]) -> None:
+    if not isinstance(update, dict):
+        return
+
+    for value in update.values():
+        if not isinstance(value, dict):
+            continue
+        for message in value.get("messages") or []:
+            if isinstance(message, BaseMessage) and message not in target:
+                target.append(message)
 
 
 def _tool_names(messages: list[BaseMessage]) -> set[str]:

@@ -66,7 +66,8 @@ def cmd_demo(text: str) -> int:
 
     async def run_demo() -> str:
         agent = await build_agent()
-        return await answer(agent, [HumanMessage(content=text)])
+        reply = await answer(agent, [HumanMessage(content=text)])
+        return reply.text
 
     reply = asyncio.run(run_demo())
     print("\n" + "=" * 60)

@@ -2,13 +2,15 @@
 
 A small Telegram agent for Mangalore (and anywhere else you point it at).
 
-It does two things:
+It does three things:
 
 1. chats normally;
-2. plans one day out when you give it the details it needs.
+2. plans one day out when you give it the details it needs;
+3. saves one approved plan and watches the weather for it.
 
-There is no LangGraph state machine, no critic, no revision loop, and no
-scheduler. One LangChain agent calls a few tools and answers.
+There is no LangGraph state machine, no critic, and no revision loop. One
+LangChain agent calls a few tools and answers. One tiny `asyncio` task handles
+the approved plan's reminder and rain checks.
 
 ## What it asks for
 
@@ -46,6 +48,31 @@ no separate food agent, no separate budget agent.
 | `find_famous_food` | Tavily search for famous local dishes |
 | `calculate_budget` | Adds up the finished plan; called last |
 
+## Save, reminders and rain
+
+A plan is not saved automatically. After a plan reply, the bot shows:
+
+`Approve & save` / `Discard`
+
+Approving writes one row to SQLite. `chat_id` is the primary key, so a new
+approved plan replaces the old one. There is only ever one saved trip per chat.
+
+What happens after approval:
+
+- `/mytrip` resends the saved plan.
+- At **21:00 the night before**, the bot sends the plan again and asks if you
+  want changes.
+- At about **24h** and **3h before** the plan, it re-checks the weather.
+- If rain is high and has jumped since approval, it sends one short indoor-backup
+  warning. The rule is: at least 60% now, and at least 25 points worse than the
+  approval value. If there was no approval value, it alerts at 70%+.
+
+Slot start times are simple conventions: morning 08:00, afternoon 13:00,
+evening 17:00, full day 08:00. There is no external scheduler; one loop inside
+the bot checks the SQLite table every minute.
+
+The database lives at `data/sanje.db` and is gitignored.
+
 ## Setup
 
 ```powershell
@@ -72,6 +99,12 @@ uv run python main.py demo "Tomorrow, 4 of us, Rs 2000, evening, from Mangalore"
 uv run python main.py skills
 ```
 
+In Telegram:
+
+- `/mytrip` resends the saved plan.
+- `/new` starts a fresh conversation.
+- `/help` shows the short intro again.
+
 ## LangSmith
 
 Set these in `.env` when you have the key:
@@ -96,5 +129,6 @@ OpenAI-compatible endpoint.
 
 ## Scope
 
-Simple on purpose. No buttons, no database, no reminders, no rain watch, and no
-strict budget rejection. A small overage is reported, not fought over.
+Simple on purpose. One saved plan per chat, one reminder and two rain checks.
+No LangGraph, no critic loop, no multi-agent routing, no strict budget
+rejection. A small overage is reported, not fought over.
