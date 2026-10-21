@@ -59,7 +59,7 @@ def tavily_search(
             {
                 "title": row.get("title", ""),
                 "url": row.get("url", ""),
-                "content": (row.get("content") or "")[:600],
+                "content": (row.get("content") or "")[:400],
             }
         )
 

@@ -39,3 +39,19 @@ def test_search_failure_gets_an_honest_note():
     result = _finalize(text, messages)
 
     assert "unverified" in result
+
+
+def test_matching_budget_line_is_not_duplicated():
+    text = "Plan\n\nRs 1,500 of Rs 2,000 – within budget (Rs 500 under)"
+    messages = [
+        HumanMessage(content="plan"),
+        tool_message(
+            "calculate_budget",
+            {"display": "Rs 1,500 of Rs 2,000 - within budget (Rs 500 under)"},
+        ),
+    ]
+
+    result = _finalize(text, messages)
+
+    assert "**Budget (calculated):**" not in result
+    assert result.count("Rs 1,500") == 1

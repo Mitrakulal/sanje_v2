@@ -33,6 +33,6 @@ def find_famous_food(location: str, limit: int = 6) -> dict:
 
     return {
         "location": location,
-        "summary": summary,
-        "sources": result.get("results", []),
+        "summary": (summary or "")[:700],
+        "sources": result.get("results", [])[:5],
     }

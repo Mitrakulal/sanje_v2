@@ -77,6 +77,7 @@ def _model():
         api_key=SETTINGS.api_key,
         temperature=0,
         max_tokens=max(600, SETTINGS.max_tokens),
+        max_retries=5,
     )
 
 
@@ -149,12 +150,16 @@ def _tool_payload(messages: list[BaseMessage], name: str) -> dict | None:
     return None
 
 
+def _normalize(text: str) -> str:
+    return re.sub(r"\s+", " ", text.replace("–", "-").replace("—", "-")).strip().lower()
+
+
 def _finalize(text: str, messages: list[BaseMessage]) -> str:
     """Keep the model's wording, but make the budget and tool gaps trustworthy."""
     budget = _tool_payload(messages, "calculate_budget")
     if budget and budget.get("display"):
         display = budget["display"]
-        if display not in text:
+        if _normalize(display) not in _normalize(text):
             lines = [
                 line
                 for line in text.splitlines()
